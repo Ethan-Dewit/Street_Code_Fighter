@@ -48,7 +48,7 @@ impl SDLCore{
 
 		wincan.set_draw_color(Color::RGBA(0, 128, 128, 255));
 		wincan.clear();
-		wincan.present();
+		//wincan.present();
 
 		Ok(SDLCore{
 			sdl_cxt,

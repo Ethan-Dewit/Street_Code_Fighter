@@ -4,19 +4,22 @@ use sdl2::image::{self, LoadTexture}; // InitFlag,
 use sdl2::render::{WindowCanvas, Texture, TextureCreator};
 use sdl2::rect::{Point, Rect};
 use sdl2::pixels::Color;
-// use std::fs;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::render::Canvas;
+use sdl2::video::Window;
+use sdl2::video::WindowContext;
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::cell::RefCell;
 use std::path::Path;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
-use sdl2::video::WindowContext;
 use std::time::{Instant, Duration}; // needed for FPS
 use std::thread;
 use std::env;
+use std::io;
+
+
 use physics::collisions::*;
 use physics::vecmath::*;
 use physics::particle::*;
@@ -49,6 +52,11 @@ pub fn run_game() -> Result<(), String>{
     let random_num: f64 = rng.gen(); // generates a float between 0 and 1
     println!("{}", random_num);
 
+    
+    let (socket, player_number) = networking::config::client_setup();
+    socket.set_read_timeout(None).expect("set_read_timeout call failed");
+
+
     let mut game_window = {
         match view::core::SDLCore::init(TITLE, false, CAM_W, CAM_H){
             Ok(t) => t,
@@ -57,12 +65,12 @@ pub fn run_game() -> Result<(), String>{
     };
 
     // Creating initial character state
-    let fighter = characters::characterAbstract::CharacterState::new();
-    let fighter2 = characters::characterAbstract::CharacterState::new();
+    let fighter1 = characters::characterAbstract::CharacterState::new();
+    let mut fighter1 = characters::characterAbstract::Fighter::new(fighter1);
 
-    let mut fighter = characters::characterAbstract::Fighter::new(fighter);
+    //Create second fighter and spawn them to the right of first fighter
+    let fighter2 = characters::characterAbstract::CharacterState::new();
     let mut fighter2 = characters::characterAbstract::Fighter::new(fighter2);
-    //this is just to make fighter2 spawn a little to the right of fighter
     fighter2.char_state.position.borrow_mut().position.replace(&PhysVec::new(300.0, 0.0));
     fighter2.name = characters::characterAbstract::Characters::Java;
 
@@ -77,6 +85,7 @@ pub fn run_game() -> Result<(), String>{
     // FUNCTIONING
     // EDIT: Modularize. Challenge: figuring out how to deal with texture's + hashmap lifetime
     // create HashMap of all textures
+
     let mut python_textures = HashMap::new();
     let mut java_textures = HashMap::new();
 
@@ -136,7 +145,7 @@ pub fn run_game() -> Result<(), String>{
 
     //load window before game starts with starting texture
     let texture = {
-        match python_textures.get(&fighter.char_state.state) {
+        match python_textures.get(&fighter1.char_state.state) {
             Some(text) => text,
             _=> panic!("No texture found for the state! Oh nos."),
         }
@@ -149,7 +158,7 @@ pub fn run_game() -> Result<(), String>{
         }
     };
 
-    game_window.render(&background, &texture, &fighter, &texture2, &fighter2, &hazard, &hazard_texture);
+    game_window.render(&background, &texture, &fighter1, &texture2, &fighter2, &hazard, &hazard_texture);
 
 
     let collisions = BVHierarchy::new(CollisionObject::new_from(CollisionObjectType::Platform, platform.clone(),
@@ -161,7 +170,7 @@ pub fn run_game() -> Result<(), String>{
                 PhysVec::new(hazard.position.x as f32, hazard.position.y as f32), 0.5, 200.0))));
 
 
-//################################################-GAME-LOOP###############################################
+  //################################################-GAME-LOOP###############################################
     'gameloop: loop{
         let loop_time = Instant::now();
     //################################################-GET-INPUT-##########################################
@@ -174,7 +183,6 @@ pub fn run_game() -> Result<(), String>{
             }
         }
 
-
         //gather player input
         let player_input: HashSet<Keycode> = game_window.event_pump
             .keyboard_state()
@@ -182,37 +190,15 @@ pub fn run_game() -> Result<(), String>{
             .filter_map(Keycode::from_scancode)
             .collect();
 
+        let player_input = input::inputHandler::convert_input(&player_input);
+
     //##############################################-PROCESS-EVENTS-#######################################
-        //process player movement
-        input::inputHandler::keyboard_input(&player_input, &mut fighter);
-
-        //select frame to be rendered
-        fighter.char_state.advance_frame();
-        fighter2.char_state.advance_frame();
-
-        //move character based on current frame
-        input::movement::move_char(&mut fighter);
-        input::movement::move_char(&mut fighter2);
-
-        fighter.char_state.update_bounding_boxes(&collisions);
-        fighter2.char_state.update_bounding_boxes(&collisions);
-        collisions.resolve_collisions();
-        // println!("\nCollisions head: \n{:?}", collisions.head);
-
-        //move hazard
-        if hazard.sprite.y() < 600 && hazard.fell == false {
-           hazard.sprite.offset(0, 7);
-           //println!("{}", hazard.sprite.y())
-       }
-       if hazard.sprite.y() >= 600 {
-           hazard.reset();
-           hazard.fell = false;
-       }
+        networking::transmit::send_input(&socket, &player_input);
     //##################################################-RENDER-###########################################
 
         // get the proper texture within the game
         let texture = {
-            match python_textures.get(&fighter.char_state.state) {
+            match python_textures.get(&fighter1.char_state.state) {
                 Some(text) => text,
                 _=> panic!("No texture found for the state! Oh nos."),
             }
@@ -225,7 +211,7 @@ pub fn run_game() -> Result<(), String>{
         };
 
         // render canvas
-        game_window.render(&background, &texture, &fighter, &texture2, &fighter2, &hazard, &hazard_texture);
+        game_window.render(&background, &texture, &fighter1, &texture2, &fighter2, &hazard, &hazard_texture);
     //##################################################-SLEEP-############################################
 
         thread::sleep(frame_time - loop_time.elapsed().clamp(Duration::new(0, 0), frame_time));
@@ -235,9 +221,110 @@ pub fn run_game() -> Result<(), String>{
 
 
 pub fn run_server() -> Result<(), String>{
-    networking::chatServer::server_start();
+   let socket = networking::config::server_setup();
+    socket.set_read_timeout(None).expect("set_read_timeout call failed");
+
+    let mut client_addresses = HashMap::new();
+    let mut player_count: u8 = 1;
+
+    'connecting: loop{
+        player_count = networking::config::client_connect(&socket, &mut client_addresses, player_count);
+        if player_count == 3{
+            println!("Two players found!");
+            break 'connecting;
+        }
+    }
+
+    // Creating initial character state
+    let fighter1 = characters::characterAbstract::CharacterState::new();
+    let mut fighter1 = characters::characterAbstract::Fighter::new(fighter1);
+
+
+    // Create Character 2 and Move them to the right
+    let fighter2 = characters::characterAbstract::CharacterState::new();
+    let mut fighter2 = characters::characterAbstract::Fighter::new(fighter2);
+    fighter2.char_state.position.borrow_mut().position.replace(&PhysVec::new(300.0, 0.0));
+    fighter2.name = characters::characterAbstract::Characters::Java;
+
+    //creates hazard
+    let mut hazard = physics::hazard::Hazard::new();
+
+    let platform = Rect::new(40, 620, CAM_W-80, CAM_H-680);
+
+
+    let collisions = BVHierarchy::new(CollisionObject::new_from(CollisionObjectType::Platform, platform.clone(),
+        RefCell::new(Particle::new(
+            PhysVec::new(platform.x as f32, platform.y as f32), 0.5, 2000000000.0))));
+
+    collisions.insert(CollisionObject::new_from(CollisionObjectType::Hazard, hazard.sprite.clone(),
+        RefCell::new(Particle::new(
+            PhysVec::new(hazard.position.x as f32, hazard.position.y as f32), 0.5, 200.0))));
+
+
+
+    for address in client_addresses.keys(){
+        socket.send_to(&[0], address).expect("message not sent");
+    }
+
+    socket.set_nonblocking(true).unwrap();
+
+
+  //###############################################-GAME-LOOP###############################################
+    'gameloop: loop{
+    //#############################################-RECEIVE-INPUT-#######################################
+        let mut input_1: HashSet<u8> = HashSet::new();
+        let mut input_2: HashSet<u8> = HashSet::new();
+        let mut message_1 = false;
+        let mut message_2 = false;
+
+        'peeking: loop{
+            if networking::transmit::ready_to_read(&socket){break;}
+        }
+
+        'receiving: loop{
+            networking::transmit::receive_input(&socket, &client_addresses, &mut input_1, 
+                &mut input_2, &mut message_1, &mut message_2);
+        
+            if message_1 && message_2 { break; }
+        }
+
+    //############################################-PROCESS-EVENTS-#######################################
+
+        //process player movement
+        input::inputHandler::keyboard_input(&input_1, &mut fighter1);
+        input::inputHandler::keyboard_input(&input_2, &mut fighter2);
+
+        //select frame to be rendered
+        fighter1.char_state.advance_frame();
+        fighter2.char_state.advance_frame();
+
+        //move character based on current frame
+        input::movement::move_char(&mut fighter1);
+        input::movement::move_char(&mut fighter2);
+
+        fighter1.char_state.update_bounding_boxes(&collisions);
+        fighter2.char_state.update_bounding_boxes(&collisions);
+        collisions.resolve_collisions();
+        // println!("\nCollisions head: \n{:?}", collisions.head);
+
+        //move hazard
+        if hazard.sprite.y() < 600 && hazard.fell == false {
+            hazard.sprite.offset(0, 7);
+            //println!("{}", hazard.sprite.y())
+        }
+
+        if hazard.sprite.y() >= 600 {
+            hazard.reset();
+            hazard.fell = false;
+        }
+
+    //##############################################-SEND-GAMESTATE-######################################
+        
+    }
+
     Ok(())
 }
+
 
 /*
  // run credits
@@ -302,7 +389,9 @@ pub fn run_server() -> Result<(), String>{
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
+    
     if args.len() > 1 && "server".eq(&args[1]){
+        println!("Running Server");
         run_server()?;
     }else{
         run_game()?;
