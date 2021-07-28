@@ -184,13 +184,13 @@ pub fn receive(socket: &UdpSocket) -> GameState{
     let mut buffer = [0u8; 100];
     let mut number_of_bytes;
 
-    loop{    
+    //loop{    
         match socket.recv(&mut buffer){
-            Ok(t) => {number_of_bytes = t; break;},
+            Ok(t) => {number_of_bytes = t;},// break;},
             //Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {},
             Err(e) => panic!("recv function failed: {:?}", e),
         }
-    }
+    //}
 
     let state = deserialize::<GameState>(&buffer).expect("cannot crack ze coode");
     //println!("Data Received");

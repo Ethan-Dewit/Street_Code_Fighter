@@ -234,14 +234,16 @@ fn receive(socket: &UdpSocket,
         }
     };
     
-    let received_input = deserialize::<InputValues>(&buffer).expect("Couldn't interpret data");
+    let mut received_input = deserialize::<InputValues>(&buffer).expect("Couldn't interpret data");
    
     if client_addresses.get(&src_addr).unwrap().eq(&1) && !*message_1{
         input_1.copy(received_input);
+        //input_1 = &mut received_input;
         *message_1 = true;
         println!("Received Input from Player 1");
     }else if client_addresses.get(&src_addr).unwrap().eq(&2) && !*message_2{
         input_2.copy(received_input);
+        //input_2 = &mut received_input;
         *message_2 = true;
         println!("Received Input from Player 2");
     }

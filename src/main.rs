@@ -18,6 +18,7 @@ use std::time::{Instant, Duration}; // needed for FPS
 use std::thread;
 use std::env;
 use std::io;
+use std::collections::VecDeque;
 
 
 use physics::collisions::*;
@@ -44,7 +45,7 @@ const CAM_H: u32 = 720;
 const FRAME_RATE: f64 = 1.0/60.0;
 
 
-pub fn run_game() -> Result<(), String>{
+pub fn run_client() -> Result<(), String>{
     let frame_time = Duration::from_secs_f64(FRAME_RATE);
 
     // get random # (for music)
@@ -170,6 +171,13 @@ pub fn run_game() -> Result<(), String>{
                 PhysVec::new(hazard.position.x as f32, hazard.position.y as f32), 0.5, 200.0))));
 
 
+    let mut input_buffer: VecDeque<networking::transmit::GameState> = VecDeque::new();
+
+    for i in 0 .. 6{
+        input_buffer.push_back(networking::transmit::GameState::new(&fighter1, &fighter2));
+    }
+
+
   //################################################-GAME-LOOP###############################################
     'gameloop: loop{
         let loop_time = Instant::now();
@@ -194,6 +202,16 @@ pub fn run_game() -> Result<(), String>{
 
     //##############################################-PROCESS-EVENTS-#######################################
         networking::transmit::send_input(&socket, &player_input);
+
+        let state = input_buffer.pop_front().unwrap();
+        
+        fighter1.char_state.set_state(state.p1_state);
+        fighter1.char_state.current_frame = state.p1_frame;
+        fighter1.char_state.position.replace(state.p1_position);
+
+        fighter2.char_state.set_state(state.p2_state);
+        fighter2.char_state.current_frame = state.p2_frame;
+        fighter2.char_state.position.replace(state.p2_position);
     //##################################################-RENDER-###########################################
 
         // get the proper texture within the game
@@ -214,6 +232,7 @@ pub fn run_game() -> Result<(), String>{
         game_window.render(&background, &texture, &fighter1, &texture2, &fighter2, &hazard, &hazard_texture);
     //##################################################-SLEEP-############################################
 
+        input_buffer.push_back(networking::transmit::receive_game_state(&socket));
         thread::sleep(frame_time - loop_time.elapsed().clamp(Duration::new(0, 0), frame_time));
     }
     Ok(())
@@ -319,7 +338,8 @@ pub fn run_server() -> Result<(), String>{
         }
 
     //##############################################-SEND-GAMESTATE-######################################
-        
+        let current_frame = networking::transmit::GameState::new(&fighter1, &fighter2);
+        networking::transmit::send_game_state(&socket, &client_addresses, &current_frame);
     }
 
     Ok(())
@@ -393,8 +413,8 @@ fn main() -> Result<(), String> {
     if args.len() > 1 && "server".eq(&args[1]){
         println!("Running Server");
         run_server()?;
-    }else{
-        run_game()?;
+    }else if args.len() > 1 && "client".eq(&args[1]){
+        run_client()?;
         //networking::chatClient::server_connect();
     }
 
