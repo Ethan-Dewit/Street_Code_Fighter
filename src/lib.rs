@@ -1,5 +1,5 @@
 // adding here, so we can use for example/ folder :)
-//pub mod networking;
+pub mod networking;
 pub mod animation;
 pub mod input;
 pub mod characters;

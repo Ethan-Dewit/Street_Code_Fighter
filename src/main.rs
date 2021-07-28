@@ -13,6 +13,7 @@ use sdl2::video::WindowContext;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::path::Path;
 use std::time::{Instant, Duration}; // needed for FPS
 use std::thread;
@@ -24,6 +25,7 @@ use std::collections::VecDeque;
 use physics::collisions::*;
 use physics::vecmath::*;
 use physics::particle::*;
+use view::globals::*;
 use rand::prelude::*;
 
 pub mod characters; // for characterAbstract
@@ -58,6 +60,8 @@ pub fn run_client() -> Result<(), String>{
     socket.set_read_timeout(None).expect("set_read_timeout call failed");
 
 
+
+
     let mut game_window = {
         match view::core::SDLCore::init(TITLE, false, CAM_W, CAM_H){
             Ok(t) => t,
@@ -75,11 +79,15 @@ pub fn run_client() -> Result<(), String>{
     fighter2.char_state.position.borrow_mut().position.replace(&PhysVec::new(300.0, 0.0));
     fighter2.name = characters::characterAbstract::Characters::Java;
 
+
     let mut hazard = physics::hazard::Hazard::new();
 
     let texture_creator = game_window.wincan.texture_creator();
 
-    let platform = Rect::new(40, 620, CAM_W-80, CAM_H-680);
+    let platform = Rect::new(50, 560, CAM_W-100, 30);
+    let wall_l = Rect::new(WALL_L.0, WALL_L.1, WALL_SIZE.0, WALL_SIZE.1);
+    let wall_r = Rect::new(WALL_R.0, WALL_R.1, WALL_SIZE.0, WALL_SIZE.1);
+    let arch = Rect::new(ARCH.0, ARCH.1, ARCH_SIZE.0, ARCH_SIZE.1);
 
 
     //////////////////////////
@@ -100,6 +108,10 @@ pub fn run_client() -> Result<(), String>{
     let block = texture_creator.load_texture("src/assets/images/characters/python/block.png")?;
     let hazard_texture = texture_creator.load_texture("src/assets/images/hazards/stalactite100x100.png")?;
     let background = texture_creator.load_texture("src/assets/images/background/small_background.png")?;
+    let healthbar_left = texture_creator.load_texture("src/assets/images/healthbar/healthbar_left.png")?;
+    let healthbar_right = texture_creator.load_texture("src/assets/images/healthbar/healthbar_right.png")?;
+    let healthbar_fill_left = texture_creator.load_texture("src/assets/images/healthbar/healthbar_fill_left.png")?;
+    let healthbar_fill_right = texture_creator.load_texture("src/assets/images/healthbar/healthbar_fill_right.png")?;
 
     let java_idle = texture_creator.load_texture("src/assets/images/characters/java/idle.png")?;
     let java_walk = texture_creator.load_texture("src/assets/images/characters/java/walk.png")?;
@@ -128,10 +140,20 @@ pub fn run_client() -> Result<(), String>{
     java_textures.insert(animation::sprites::State::HKick, java_hkick);
     java_textures.insert(animation::sprites::State::Block, java_block);
 
-    // music
+    ///////////////////////
+    // NOT YET FUNCTIONING
+    // Self::load_textures(&texture_creator, &mut fighter);
+    ////////
+
+    // get random # (for music)
+    let mut rng = rand::thread_rng();
+    let random_num: f64 = rng.gen(); // generates a float between 0 and 1
+    println!("{}", random_num);
+
+    // music 
     let clips = audio::handler::Clips::new();
 
-    // randomize between the 3x combat audio tracks
+        // randomize between the 3x combat audio tracks
     if random_num < 0.4 { 
         sdl2::mixer::Channel::all().play(&clips.combat1, -1); // -1 means repeat forever
     } else if random_num < 0.7 {
@@ -139,10 +161,7 @@ pub fn run_client() -> Result<(), String>{
     } else {
         sdl2::mixer::Channel::all().play(&clips.combat3, -1); // -1 means repeat forever
     }
-    ///////////////////////
-    // NOT YET FUNCTIONING
-    // Self::load_textures(&texture_creator, &mut fighter);
-    ////////
+
 
     //load window before game starts with starting texture
     let texture = {
@@ -159,16 +178,28 @@ pub fn run_client() -> Result<(), String>{
         }
     };
 
-    game_window.render(&background, &texture, &fighter1, &texture2, &fighter2, &hazard, &hazard_texture);
+
+    game_window.render(&background, &texture, &fighter, &texture2, &fighter2, 
+            &hazard, &hazard_texture, &platform, &healthbar_left, &healthbar_right,
+            &healthbar_fill_left, &healthbar_fill_right)?;
+
+
+
+
+
 
 
     let collisions = BVHierarchy::new(CollisionObject::new_from(CollisionObjectType::Platform, platform.clone(),
-        RefCell::new(Particle::new(
-            PhysVec::new(platform.x as f32, platform.y as f32), 0.5, 2000000000.0))));
+        Rc::new(RefCell::new(Particle::new(
+            PhysVec::new((CAM_W-50-platform.width()) as f32, 560f32), 0.5, 2000000000.0, 0)))));
 
-        collisions.insert(CollisionObject::new_from(CollisionObjectType::Hazard, hazard.sprite.clone(),
-            RefCell::new(Particle::new(
-                PhysVec::new(hazard.position.x as f32, hazard.position.y as f32), 0.5, 200.0))));
+    // collisions.insert(CollisionObject::new_from(CollisionObjectType::Wall, wall_l, 
+    //     Rc::new(RefCell::new(Particle::new(PhysVec::new(WALL_L.0 as f32, WALL_L.1 as f32), 0.5, 20000000000.0, 0)))));
+    // collisions.insert(CollisionObject::new_from(CollisionObjectType::Wall, wall_r, 
+    //     Rc::new(RefCell::new(Particle::new(PhysVec::new(WALL_R.0 as f32, WALL_R.1 as f32), 0.5, 20000000000.0, 0)))));
+    collisions.insert(CollisionObject::new_from(CollisionObjectType::Platform, arch, 
+        Rc::new(RefCell::new(Particle::new(PhysVec::new(ARCH.0 as f32, ARCH.1 as f32), 0.5, 20000000000.0, 0)))));
+
 
 
     let mut input_buffer: VecDeque<networking::transmit::GameState> = VecDeque::new();
@@ -182,7 +213,7 @@ pub fn run_client() -> Result<(), String>{
     'gameloop: loop{
         let loop_time = Instant::now();
     //################################################-GET-INPUT-##########################################
-        //check if play quits
+        //ceck if play quits
         for event in game_window.event_pump.poll_iter() {
             match event {
                 Event::Quit{..} | Event::KeyDown{keycode: Some(Keycode::Escape), ..} => break 'gameloop,
@@ -212,6 +243,16 @@ pub fn run_client() -> Result<(), String>{
         fighter2.char_state.set_state(state.p2_state);
         fighter2.char_state.current_frame = state.p2_frame;
         fighter2.char_state.position.replace(state.p2_position);
+
+
+
+
+
+
+
+
+
+
     //##################################################-RENDER-###########################################
 
         // get the proper texture within the game
@@ -229,7 +270,16 @@ pub fn run_client() -> Result<(), String>{
         };
 
         // render canvas
-        game_window.render(&background, &texture, &fighter1, &texture2, &fighter2, &hazard, &hazard_texture);
+
+        game_window.render(&background, &texture, &fighter, &texture2, &fighter2, 
+            &hazard, &hazard_texture, &platform, &healthbar_left, &healthbar_right,
+            &healthbar_fill_left, &healthbar_fill_right)?;
+    
+
+
+
+
+
     //##################################################-SLEEP-############################################
 
         input_buffer.push_back(networking::transmit::receive_game_state(&socket));
